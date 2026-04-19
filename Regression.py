@@ -3,17 +3,23 @@ import pandas as pd
 import os, time, random, sqlite3, re, json
 from pysr import PySRRegressor
 from math import sin, exp
-from sklearn.metrics import r2_score, accuracy_score, confusion_matrix
+from sklearn.metrics import r2_score, accuracy_score, confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score, ConfusionMatrixDisplay
 from sklearn.model_selection import train_test_split
+from Levenshtein import distance as lev_dist
+from sklearn.preprocessing import MinMaxScaler
+from zss import Node, simple_distance
+from sympy import parse_expr, preorder_traversal
+import matplotlib.pyplot as plt
 
 
 def load_and_split_data():
     
     df = pd.read_excel('AllSAMPLES.xlsx')
     
-    random_int = random.randint(0, 2**9)
+    # random_int = random.randint(0, 2**9)
+    random_int = 256
     # Rename columns here so it is consistent for all sets
-    df.columns = ["Tin", "Q", "flow_shale", "flow_steam", "length", "Pressure", "Status", "Feasability"]
+    df.columns = ["Tin", "q", "flow_shale", "flow_steam", "length", "Pressure", "Status", "Feasability"]
 
     # 1. Split into Train (55%) and Temp (45%)
     df_train, df_temp = train_test_split(df, test_size=0.45, random_state=random_int, shuffle=True)
@@ -42,11 +48,7 @@ def Training_Set(df, var, run_id, path):
             "square",
             "sqrt",
             "inv",
-            
-            "sin",
-            "cos",
             "cube",
-            "tan",
             "log",
         ],
         extra_sympy_mappings={"inv": lambda x: 1 / x},
@@ -75,7 +77,7 @@ def Training_Set(df, var, run_id, path):
             # "sin": {"sin": 0, "cos": 0, "tan": 0}, 
             # "cos": {"sin": 0, "cos": 0, "tan": 0},
             # "tan": {"sin": 0, "cos": 0, "tan": 0},
-    model.fit(X, Y)
+    model.fit(X, Y, variable_names=var)
     
 
 
@@ -114,21 +116,74 @@ def Test_Set(df, var, matrix_status, path):
     # y_pred is the raw output (z) of the symbolic equation: f(X)
     raw_scores_z = model.predict(X_test)
     
-    
+
     # 2. Apply a threshold (typically 0.5) to get binary predicted classes (0 or 1)
     # Use .astype(int) to convert True/False to 1/0
     # probabilities = 1 / (1 + np.exp(-raw_scores_z))
-    # predicted_classes = probabilities.round()             <-- Used for 0 and 1
-
-
+    clipped_z = np.clip(raw_scores_z, -500, 500)
+    probabilities = 1 / (1 + np.exp(-clipped_z))
 
     predicted_classes = np.sign(raw_scores_z)
     predicted_classes[predicted_classes == 0] = -1  # Treat 0 as -1 for binary classification
     
+    # --- INCORRECT PREDICTIONS ANALYSIS (Pure NumPy) ---
+    # 4. Find the indices where the prediction doesn't match the actual label
+    # incorrect_mask = predicted_classes != y_test
+    # incorrect_indices = np.where(incorrect_mask)[0]
+
+    # print(f"\n--- Incorrect Predictions Analysis ({len(incorrect_indices)} errors) ---")
+    
+    # if len(incorrect_indices) > 0:
+    #     # Extract the data just for the incorrect rows
+    #     inc_z = raw_scores_z[incorrect_mask]
+    #     inc_prob = probabilities[incorrect_mask] * 100
+    #     inc_pred = predicted_classes[incorrect_mask].astype(int)
+    #     inc_actual = y_test[incorrect_mask].astype(int)
+
+    #     # Sort by absolute raw score descending (most confident errors first)
+    #     sort_order = np.argsort(-np.abs(inc_z))
+
+    #     # Print the table header
+    #     print(f"{'Index':<7} | {'Raw Score (z)':<15} | {'Probability':<15} | {'Predicted':<10} | {'Actual':<10}")
+    #     print("-" * 68)
+        
+    #     # Print each incorrect row
+    #     for i in sort_order:
+    #         orig_idx = incorrect_indices[i]
+    #         print(f"{orig_idx:<7} | {inc_z[i]:<15.4f} | {inc_prob[i]:<13.2f}% | {inc_pred[i]:<10} | {inc_actual[i]:<10}")
+    # else:
+    #     print("Wow, 100% accuracy! No errors to show.")
+    
+    # print("-" * 68 + "\n")
+
+
     # 4. Calculate the Accuracy
     accuracy = accuracy_score(y_test, predicted_classes)
+    precision = precision_score(y_test, predicted_classes)
+    recall = recall_score(y_test, predicted_classes)
+    f1 = f1_score(y_test, predicted_classes)
+    auc = roc_auc_score(y_test, probabilities)
+    print(f"Precision Score: {precision:.4f} (Safety Focus - minimizing false positives)")
+    print(f"Recall Score:    {recall:.4f} (Profit Focus - minimizing false negatives)")
+    print(f"F1 Score:        {f1:.4f}")
+    print(f"AUC:             {auc:.4f}")
 
     print(f"Accuracy Score: {accuracy:.4f}")
+    class_names = ["Infeasible", "Feasible"]
+    disp = ConfusionMatrixDisplay.from_predictions(
+    y_test, 
+    predicted_classes, 
+    display_labels=class_names, 
+    cmap= 'RdBu',      # This generates the exact blue color scheme from your image
+    text_kw={'color': 'white'},
+    colorbar=False     # Set to True if you want the color scale legend on the right
+    )
+
+    # Add a title if desired
+    plt.title("PySR Model")
+
+    # Display the plot
+    plt.show()
     if matrix_status:
         tn, fp, fn, tp = confusion_matrix(y_test, predicted_classes).ravel()
         print("-" * 30)
@@ -199,27 +254,98 @@ def print_results(accuracy, best_lambda_func, time_elapsed, var, rand_state, v_s
     # with open(file_path, "a") as file:
     #     file.write(txt + "\n")
 
+def compare_pysr_runs(file1, file2, top_n=5):
+    # 1. Load the Hall of Fame dataframes
+    df1 = pd.read_csv(file1)
+    df2 = pd.read_csv(file2)
+    
+    # 2. Get the top N equations (lowest loss)
+    eqs1 = df1.nsmallest(top_n, 'Loss')['Equation'].tolist()
+    eqs2 = df2.nsmallest(top_n, 'Loss')['Equation'].tolist()
+    
+    # 3. Calculate Cross-Model Distance Matrix
+    dist_matrix = np.zeros((top_n, top_n))
+    for i, e1 in enumerate(eqs1):
+        for j, e2 in enumerate(eqs2):
+            dist_matrix[i, j] = lev_dist(str(e1), str(e2))
+            
+    # 4. Calculate Metrics
+    mean_dist = np.mean(dist_matrix)
+    min_dist = np.min(dist_matrix) # Distance between the two "best" overall
+    
+    print(f"--- Comparison: {file1} vs {file2} ---")
+    print(f"Mean Structural Divergence: {mean_dist:.2f}")
+    print(f"Closest Match Distance: {min_dist:.2f}")
+    
+    return dist_matrix
+
+def sympy_to_zss(expr):
+    """Converts a SymPy expression into a ZSS Node tree."""
+    if expr.is_Atom:
+        return Node(str(expr))
+    
+    root = Node(str(expr.func))
+    for arg in expr.args:
+        root.addkid(sympy_to_zss(arg))
+    return root
+
+def calculate_internal_tree_entropy(filepath):
+    df = pd.read_csv(filepath)
+    # Ensure we use the correct column names
+    eq_col = 'sympy_format' if 'sympy_format' in df.columns else 'Equation'
+    
+    # Sort by complexity to see the evolution
+    df = df.sort_values('Complexity')
+    equations = df[eq_col].tolist()
+    complexities = df['Complexity'].tolist()
+    
+    print(f"--- Structural Evolution for {filepath} ---")
+    
+    distances = []
+    for i in range(len(equations) - 1):
+        tree1 = sympy_to_zss(parse_expr(equations[i]))
+        tree2 = sympy_to_zss(parse_expr(equations[i+1]))
+        
+        dist = simple_distance(tree1, tree2)
+        distances.append(dist)
+        
+        print(f"Comp {complexities[i]} -> {complexities[i+1]} | Distance: {dist}")
+
+    avg_drift = sum(distances) / len(distances) if distances else 0
+    print(f"\nAverage Structural Drift: {avg_drift:.2f}")
+    # print(distances)
+
 def start(variables, run_id, path, num_repeat):
     
-    for i in range(num_repeat):
-        if path[-1] != ".":
-           path = path[:-1] + str(i)
-           run_id = run_id[:-1]+ str(i)
-        else: 
-            path = path + str(i)
-            run_id = run_id + str(i)
+    # for i in range(num_repeat):
+    #     if path[-1] != ".":
+    #        path = path[:-1] + str(i)
+    #        run_id = run_id[:-1]+ str(i)
+    #     else: 
+    #         path = path + str(i)
+    #         run_id = run_id + str(i)
 
         time_start = time.time()
 
         df_train, df_val, df_test, random_state_used = load_and_split_data()
 
-        Training_Set(df_train, variables, run_id, path)
-        validation_score= Validation_Set(df_val, variables, path)
-        accuracy, best_lambda_func, latex = Test_Set(df_test, variables, False, path)
+        # 2. Initialize the MinMaxScaler
+        # The range (1, 2) ensures all numbers are positive and strictly > 0
+        # scaler = MinMaxScaler(feature_range=(1, 2))
+
+        # 3. Fit on Train, then transform Train, Val, and Test
+        # This overwrites the specific columns in place so your other functions work natively
+        # df_train[variables] = scaler.fit_transform(df_train[variables])
+        # df_val[variables] = scaler.transform(df_val[variables])
+        # df_test[variables] = scaler.transform(df_test[variables])
+
+        # Training_Set(df_train, variables, run_id, path)
+        # validation_score= Validation_Set(df_val, variables, path)
+        accuracy, best_lambda_func, latex = Test_Set(df_test, variables, True, path)
 
         time_end = time.time()
         time_elapsed = time_end - time_start
-        print_results(accuracy, best_lambda_func, time_elapsed, variables, random_state_used, validation_score, run_id, latex)
+        # print_results(accuracy, best_lambda_func, time_elapsed, variables, random_state_used, validation_score, run_id, latex)
 
 def printlatexequation(folder_path):
     model = PySRRegressor.from_file(run_directory=folder_path)
@@ -227,12 +353,11 @@ def printlatexequation(folder_path):
 
 
 def main():
-    path = "my_equations/2_16_26.0."
-    run_id = "2_16_26.0."
-    num_repeat = 10
-    sleep_time = num_repeat * 1300
+    path = "my_equations/2_16_26.0.5"
+    run_id = "2_16_26.0.5"
+    num_repeat = 1
 
-    all_variables = ["Tin", "Q", "flow_shale","flow_steam","length", "Pressure"]
+    all_variables = ["Tin", "q", "flow_shale","flow_steam","length", "Pressure"]
     no_Tin = ["Q", "flow_shale","flow_steam","length", "Pressure"]
     
     modified = ["Q", "length",]
@@ -263,3 +388,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # compare_pysr_runs("my_equations/3_8_26.2.4/hall_of_fame.csv", "my_equations/3_8_26.2.2/hall_of_fame.csv")
+    # calculate_internal_tree_entropy("my_equations/2_14_26.1.3/hall_of_fame.csv")
