@@ -4,8 +4,8 @@ This project uses symbolic regression to discover interpretable equations for cl
 
 The practical goal is to produce a compact feasibility-boundary equation, not just a black-box classifier.
 
-**IMPORTANT**
-The dataset used for this project has been omitted from this repo. The dataset must included all variables used. The dataset must be renamed to 'AllSAMPLES.xlsx', or the code must be updated to reflect the new name of the dataset. 
+**IMPORTANT:**
+The dataset used for this project has been omitted from this repo. The dataset must included all variables used. The dataset must be renamed to `AllSAMPLES.xlsx`, or the code must be updated to reflect the new name of the dataset. 
 
 ## Project Overview
 
