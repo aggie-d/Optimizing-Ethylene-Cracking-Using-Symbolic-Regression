@@ -6,4 +6,7 @@ PySR/
 /Test_Sheet.xlsx
 /AllSAMPLES.csv
 /AllSAMPLES.xlsx
-
+my_equations/
+outputs/
+R^2_Result/
+Result_Sigmoid_Function/
