@@ -13,11 +13,11 @@ import matplotlib.pyplot as plt
 
 
 def load_and_split_data():
-    
+    '''Load Data and Split into Train, Validation, and Test'''
     df = pd.read_excel('AllSAMPLES.xlsx')
     
-    # random_int = random.randint(0, 2**9)
-    random_int = 256
+    random_int = random.randint(0, 2**9)
+    
     # Rename columns here so it is consistent for all sets
     df.columns = ["Tin", "q", "flow_shale", "flow_steam", "length", "Pressure", "Status", "Feasability"]
 
@@ -26,12 +26,12 @@ def load_and_split_data():
 
     # 2. Split Temp (45%) into Validation (15%) and Test (30%)
     # We use 0.67 because 67% of 45% = 30% of total
-    df_val, df_test = train_test_split(df_temp, test_size=0.67, random_state=42, shuffle=True)
+    df_val, df_test = train_test_split(df_temp, test_size=0.67, random_state=random_int, shuffle=True)
 
     return df_train, df_val, df_test, random_int
 
 def Training_Set(df, var, run_id, path):
-
+    '''Train Model'''
     # 1. Separate X (Features) and y (Target)
     # X contains passed columns *except* 'Feasability' and 'Status'
     X = df[var].to_numpy() 
@@ -43,7 +43,7 @@ def Training_Set(df, var, run_id, path):
         populations=50,
         niterations=1000,  #< Increase me for better results
         binary_operators=["+", "*", "-", "/"],
-        unary_operators=[
+        unary_operators=[                   #Change to find best combination
             "exp",       
             "square",
             "sqrt",
@@ -73,15 +73,13 @@ def Training_Set(df, var, run_id, path):
         ),
     )
 
-	        # "log": {"exp": 1, "log": 0},
-            # "sin": {"sin": 0, "cos": 0, "tan": 0}, 
-            # "cos": {"sin": 0, "cos": 0, "tan": 0},
-            # "tan": {"sin": 0, "cos": 0, "tan": 0},
     model.fit(X, Y, variable_names=var)
+
     
 
 
 def Validation_Set(df, var, path):
+    '''Run Model on Validation Set'''
     # 1. Separate X (Features) and y (Target)
     X_val = df[var].to_numpy() 
     y_val = df["Feasability"].to_numpy() 
@@ -102,7 +100,7 @@ def Validation_Set(df, var, path):
 
 
 def Test_Set(df, var, matrix_status, path):
-
+    '''Run Model on Test Set'''
     X_test = df[var].to_numpy() 
     y_test = df["Feasability"].to_numpy()
 
@@ -126,7 +124,7 @@ def Test_Set(df, var, matrix_status, path):
     predicted_classes = np.sign(raw_scores_z)
     predicted_classes[predicted_classes == 0] = -1  # Treat 0 as -1 for binary classification
     
-    # --- INCORRECT PREDICTIONS ANALYSIS (Pure NumPy) ---
+
     # 4. Find the indices where the prediction doesn't match the actual label
     # incorrect_mask = predicted_classes != y_test
     # incorrect_indices = np.where(incorrect_mask)[0]
@@ -199,6 +197,7 @@ def Test_Set(df, var, matrix_status, path):
 
     
 def print_results(accuracy, best_lambda_func, time_elapsed, var, rand_state, v_score, run_id, latex):
+    '''Save data to database'''
     try:
         connection = sqlite3.connect("Results.db")
         cursor = connection.cursor()
@@ -206,7 +205,6 @@ def print_results(accuracy, best_lambda_func, time_elapsed, var, rand_state, v_s
         complexity_val = int(best_lambda_func['complexity'])
         vars_serialized = json.dumps(var)
 
-        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS results (
                 trial_id TEXT PRIMARY KEY,
@@ -235,26 +233,8 @@ def print_results(accuracy, best_lambda_func, time_elapsed, var, rand_state, v_s
         print(f"Unexpected error: {e}")
 
 
-
-    # folder_name = "Result_Sigmoid_Function"
-
-    # var_list = []
-    # for i in range(len(var)):
-    #     var_list.append(f"X{i}: {var[i]}")
-
-    # if not os.path.exists(folder_name):
-    #     os.makedirs(folder_name)  # Creates the folder if it doesn't exist
-
-    # # Step 2: Create a text file inside the folder
-    # result = f"\nAccuracy Score for the best PySR equation from {path}: {accuracy}\nValidation Score:{v_score}\nVariables Used: {var_list}\nRandom State Used: {rand_state}\nTime Elapsed: {time_elapsed:.2f} seconds\nEquation Used: {best_lambda_func}\n"
-    # dashes = "-" * 90
-    
-    # txt = result + dashes
-    # file_path = os.path.join(folder_name, "2_7_2026_Results.txt")
-    # with open(file_path, "a") as file:
-    #     file.write(txt + "\n")
-
 def compare_pysr_runs(file1, file2, top_n=5):
+    '''Compare the top 5 equations from 2 different models'''
     # 1. Load the Hall of Fame dataframes
     df1 = pd.read_csv(file1)
     df2 = pd.read_csv(file2)
@@ -290,6 +270,7 @@ def sympy_to_zss(expr):
     return root
 
 def calculate_internal_tree_entropy(filepath):
+    '''Calculates the internal tree entropy of a model'''
     df = pd.read_csv(filepath)
     # Ensure we use the correct column names
     eq_col = 'sympy_format' if 'sympy_format' in df.columns else 'Equation'
@@ -316,14 +297,14 @@ def calculate_internal_tree_entropy(filepath):
     # print(distances)
 
 def start(variables, run_id, path, num_repeat):
-    
-    # for i in range(num_repeat):
-    #     if path[-1] != ".":
-    #        path = path[:-1] + str(i)
-    #        run_id = run_id[:-1]+ str(i)
-    #     else: 
-    #         path = path + str(i)
-    #         run_id = run_id + str(i)
+    '''Start Function. Runs the whole pipeline.'''
+    for i in range(num_repeat):
+        if path[-1] != ".":
+           path = path[:-1] + str(i)
+           run_id = run_id[:-1]+ str(i)
+        else: 
+            path = path + str(i)
+            run_id = run_id + str(i)
 
         time_start = time.time()
 
@@ -339,51 +320,28 @@ def start(variables, run_id, path, num_repeat):
         # df_val[variables] = scaler.transform(df_val[variables])
         # df_test[variables] = scaler.transform(df_test[variables])
 
-        # Training_Set(df_train, variables, run_id, path)
-        # validation_score= Validation_Set(df_val, variables, path)
+        Training_Set(df_train, variables, run_id, path)
+        validation_score = Validation_Set(df_val, variables, path)
         accuracy, best_lambda_func, latex = Test_Set(df_test, variables, True, path)
 
         time_end = time.time()
         time_elapsed = time_end - time_start
-        # print_results(accuracy, best_lambda_func, time_elapsed, variables, random_state_used, validation_score, run_id, latex)
+        print_results(accuracy, best_lambda_func, time_elapsed, variables, random_state_used, validation_score, run_id, latex)
 
 def printlatexequation(folder_path):
+    '''Print latex equation of chosen model'''
     model = PySRRegressor.from_file(run_directory=folder_path)
     print(f"{model.latex()}\n")
 
 
 def main():
-    path = "my_equations/2_16_26.0.5"
-    run_id = "2_16_26.0.5"
-    num_repeat = 1
+    path = "my_equations/2_16_26.0.5"       #Update to match path name for storing Model
+    run_id = "2_16_26.0.5"                  #Update to match run_id for storing Model
+    num_repeat = 1                          #Update to change number of trials repeated using the same parameters
 
     all_variables = ["Tin", "q", "flow_shale","flow_steam","length", "Pressure"]
-    no_Tin = ["Q", "flow_shale","flow_steam","length", "Pressure"]
     
-    modified = ["Q", "length",]
-
     start(all_variables, run_id, path, num_repeat)
-
-
-    # path = "my_equations/2_9_26.1."
-    # run_id = "2_9_26.1."
-    # modified = ["Q", "flow_shale", "length", "Pressure"]
-    
-    # start(modified, run_id, path, num_repeat)
-
-    # path = "my_equations/2_9_26.2."
-    # run_id = "2_9_26.2."
-    # modified = ["Q", "flow_steam", "length", "Pressure"]
-    
-    # start(modified, run_id, path, num_repeat)
-
-
-
-
-
-
-    
-    
 
 
 if __name__ == "__main__":
